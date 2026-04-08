@@ -14,8 +14,6 @@ from urllib.parse import quote_plus
 
 from git import Repo as GitRepo, Commit, InvalidGitRepositoryError, GitCommandError
 from gitdb.exc import BadName
-from pymongo import MongoClient
-from pymongo.collection import Collection
 
 from . import CORE_REPO, CORE_BRANCH, CONF_PATH
 from .utils import error, terminate, call, safe_url, remove, rmtree, assert_write
@@ -24,58 +22,107 @@ from ..types import RepoInfo, Update, Constraint
 _CACHE_PATH = ".rcache"
 
 
+import json
+
+class LocalCollection:
+    def __init__(self, name, data):
+        self.name = name
+        self._data = data
+
+    def find(self):
+        return self._data
+
+    def find_one(self, query):
+        for item in self._data:
+            if all(item.get(k) == v for k, v in query.items()):
+                return item
+        return None
+
+    def update_one(self, query, update, upsert=False):
+        item = self.find_one(query)
+        set_data = update.get('$set', {})
+        if item:
+            item.update(set_data)
+        elif upsert:
+            new_item = query.copy()
+            new_item.update(set_data)
+            self._data.append(new_item)
+        Database.get().save()
+
+    def insert_one(self, doc):
+        self._data.append(doc)
+        Database.get().save()
+
+    def insert_many(self, docs):
+        self._data.extend(list(docs))
+        Database.get().save()
+
+    def delete_one(self, query):
+        item = self.find_one(query)
+        if item:
+            self._data.remove(item)
+            Database.get().save()
+
+    def delete_many(self, query):
+        self._data[:] = [item for item in self._data if not all(item.get(k) == v for k, v in query.items())]
+        # Update the reference in the main dict
+        Database.get()._db_data[self.name] = self._data
+        Database.get().save()
+
+    def drop(self):
+        self._data.clear()
+        Database.get().save()
+
 class Database:
     _instance = None
+    _FILE = "database.json"
+
+    def __init__(self):
+        if os.path.exists(self._FILE):
+            with open(self._FILE, 'r') as f:
+                try:
+                    self._db_data = json.load(f)
+                except json.JSONDecodeError:
+                    self._db_data = {"config": [], "repos": [], "constraint": []}
+        else:
+            self._db_data = {"config": [], "repos": [], "constraint": []}
+        
+        self._config = LocalCollection("config", self._db_data.get("config", []))
+        self._repos = LocalCollection("repos", self._db_data.get("repos", []))
+        self._constraint = LocalCollection("constraint", self._db_data.get("constraint", []))
+
+    def save(self):
+        with open(self._FILE, 'w') as f:
+            json.dump(self._db_data, f, indent=4)
+
+    @classmethod
+    def get(cls) -> 'Database':
+        if not cls._instance:
+            cls._instance = cls()
+        return cls._instance
 
     @classmethod
     def is_none(cls) -> bool:
         return cls._instance is None
 
     @classmethod
-    def get(cls) -> 'Database':
-        if not cls._instance:
-            error("Database not initialized !")
-        return cls._instance
-
-    @classmethod
-    def set(cls, client: MongoClient) -> None:
-        if not cls._instance:
-            cls._instance = cls.parse(client)
-
-    _RE_UP = re.compile(r"(?<=//)(.+)(?=@\w+)")
+    def set(cls, client=None) -> None:
+        cls.get()
 
     @classmethod
     def fix_url(cls, url: str) -> str:
-        u_and_p = cls._RE_UP.search(url).group(1)
-        name, pwd = u_and_p.split(':')
-        escaped = quote_plus(name) + ':' + quote_plus(pwd)
-        return url.replace(u_and_p, escaped)
-
-    def __init__(self, config: Collection, repos: Collection, constraint: Collection):
-        self._config = config
-        self._repos = repos
-        self._constraint = constraint
-
-    @classmethod
-    def parse(cls, client: MongoClient) -> 'Database':
-        db = client["Loader"]
-
-        config = db["config"]
-        repos = db["repos"]
-        constraint = db["constraint"]
-
-        return cls(config, repos, constraint)
+        return url
 
     @property
-    def config(self) -> Collection:
+    def config(self) -> LocalCollection:
         return self._config
 
     @property
-    def repos(self) -> Collection:
+    def repos(self) -> LocalCollection:
         return self._repos
 
     @property
-    def constraint(self) -> Collection:
+    def constraint(self) -> LocalCollection:
         return self._constraint
 
 
