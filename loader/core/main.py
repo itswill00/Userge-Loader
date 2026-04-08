@@ -492,7 +492,7 @@ def get_collection(name: str):
 
 
 def _apply_time_sync_patch() -> None:
-    log("Applying Universal Time Sync Patch ...")
+    log("Applying Brutal Time Sync Patch ...")
     
     target = "userge/core/client.py"
     if not os.path.exists(target):
@@ -502,25 +502,34 @@ def _apply_time_sync_patch() -> None:
         with open(target, 'r') as f:
             content = f.read()
             
-        if "universal_time_sync" in content:
+        if "brutal_time_sync" in content:
             return
             
         patch = """
-# universal_time_sync
+# brutal_time_sync
 import time
-import urllib.request
-import email.utils
 from pyrogram.session import Session
+import pyrogram.session.internals.msg_id as py_msg_id
 
-def sync_telegram_time():
-    try:
-        with urllib.request.urlopen("https://api.telegram.org", timeout=5) as r:
-            remote_time = email.utils.mktime_tz(email.utils.parsedate_tz(r.headers.get('Date')))
-            Session.offset_time = int(remote_time - time.time())
-    except:
-        Session.offset_time = 0
+class ForcedMsgId:
+    _last_time = 0
+    _inc = 0
 
-sync_telegram_time()
+    def __new__(cls, *args, **kwargs):
+        # We force the time to be at least 30 seconds ahead of system time
+        # This bypasses "msg_id too low" by making it "high enough"
+        Session.offset_time = 30
+        
+        # Original logic to create msg_id from current (offset) time
+        now = int(time.time() + Session.offset_time)
+        if cls._last_time == now:
+            cls._inc += 4
+        else:
+            cls._last_time = now
+            cls._inc = 0
+        return (now << 32) | cls._inc
+
+py_msg_id.MsgId = ForcedMsgId
 """
         # Inject at the very top of client.py
         if "from pyrogram import Client" in content:
@@ -531,7 +540,7 @@ sync_telegram_time()
         with open(target, 'w') as f:
             f.write(content)
             
-        log("\tSuccessfully applied Universal Time Sync Patch.")
+        log("\tSuccessfully applied Brutal Time Sync Patch.")
     except Exception as e:
         log(f"\tFailed to apply time sync patch: {str(e)}")
 
