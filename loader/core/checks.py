@@ -102,7 +102,10 @@ def _vars() -> None:
         CMD_TRIGGER='.',
         SUDO_TRIGGER='!',
         FINISHED_PROGRESS_STR='█',
-        UNFINISHED_PROGRESS_STR='░'
+        UNFINISHED_PROGRESS_STR='░',
+        DEVICE_MODEL='Samsung Galaxy S23 Ultra',
+        SYSTEM_VERSION='Android 14',
+        APP_VERSION='10.3.1 (4123)'
     )
     for k, v in _var_data.items():
         env.setdefault(k, v)
