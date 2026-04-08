@@ -10,7 +10,6 @@ from shutil import which
 from struct import unpack, error as struct_error
 
 from dotenv import load_dotenv
-from pymongo import MongoClient
 
 from . import MIN_PY, MAX_PY, CONF_PATH
 from .types import Database
@@ -61,10 +60,7 @@ def _vars() -> None:
 
     string = env.get('SESSION_STRING')
 
-    if env.get('HU_STRING_SESSION') and not string:
-        error("Deprecated HU_STRING_SESSION var !", "its SESSION_STRING now")
-
-    for _ in ('API_ID', 'API_HASH', 'DATABASE_URL', 'LOG_CHANNEL_ID'):
+    for _ in ('API_ID', 'API_HASH', 'LOG_CHANNEL_ID'):
         val = env.get(_)
 
         if not val:
@@ -113,7 +109,6 @@ def _vars() -> None:
 
     workers = int(env.get('WORKERS') or 0)
     env['WORKERS'] = str(min(16, max(workers, 0) or os.cpu_count() + 4, os.cpu_count() + 4))
-    env['MOTOR_MAX_WORKERS'] = env['WORKERS']
 
     down_path = env['DOWN_PATH']
     env['DOWN_PATH'] = down_path.rstrip('/') + '/'
@@ -165,25 +160,7 @@ def _vars() -> None:
                   "either name invalid or api key from diff account")
 
     if Database.is_none():
-        db_url = env.get('DATABASE_URL')
-
-        try:
-            new_url = Database.fix_url(db_url)
-        except (ValueError, AttributeError):
-            error(f"Invalid DATABASE_URL > ({db_url}) !")
-            return
-
-        if new_url != db_url:
-            env['DATABASE_URL'] = new_url
-
-        cl = MongoClient(new_url, maxPoolSize=1, minPoolSize=0)
-
-        try:
-            cl.list_database_names()
-        except Exception as e:
-            error(f"Invalid DATABASE_URL > {str(e)}")
-
-        Database.set(cl)
+        Database.set(None)
 
     if bot_token:
         api_url = "https://api.telegram.org/bot" + bot_token
