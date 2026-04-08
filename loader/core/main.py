@@ -492,7 +492,7 @@ def get_collection(name: str):
 
 
 def _apply_time_sync_patch() -> None:
-    log("Applying Advanced Time Sync Patch ...")
+    log("Applying Universal Time Sync Patch ...")
     
     target = "userge/core/client.py"
     if not os.path.exists(target):
@@ -502,57 +502,36 @@ def _apply_time_sync_patch() -> None:
         with open(target, 'r') as f:
             content = f.read()
             
-        if "time_sync_patch_applied" in content:
+        if "universal_time_sync" in content:
             return
             
-        # We inject a monkey-patch right after imports in client.py
         patch = """
-# time_sync_patch_applied
+# universal_time_sync
 import time
+import urllib.request
+import email.utils
 from pyrogram.session import Session
-from pyrogram.session.internals import msg_id
 
-# Monkey-patch Pyrogram's msg_id generator to handle time desync
-_old_msg_id = msg_id.MsgId
+def sync_telegram_time():
+    try:
+        with urllib.request.urlopen("https://api.telegram.org", timeout=5) as r:
+            remote_time = email.utils.mktime_tz(email.utils.parsedate_tz(r.headers.get('Date')))
+            Session.offset_time = int(remote_time - time.time())
+    except:
+        Session.offset_time = 0
 
-class PatchedMsgId:
-    def __new__(cls, *args, **kwargs):
-        # Force a slight forward time shift to avoid "too low" errors
-        # Telegram allows msg_id to be up to 30 seconds in the future
-        Session.offset_time = getattr(Session, 'offset_time', 0) + 5
-        return _old_msg_id(*args, **kwargs)
-
-    def __getattr__(self, name):
-        return getattr(_old_msg_id, name)
-
-    @staticmethod
-    def set_server_time(server_time):
-        return _old_msg_id.set_server_time(server_time)
-
-try:
-    # Attempt to patch if available
-    import pyrogram.session.session as py_session
-    py_session.MsgId = PatchedMsgId
-except Exception:
-    pass
-
+sync_telegram_time()
 """
-        # Find a good place to inject, like after 'from pyrogram import Client'
+        # Inject at the very top of client.py
         if "from pyrogram import Client" in content:
             content = content.replace("from pyrogram import Client", "from pyrogram import Client\n" + patch, 1)
         else:
-            # Or just at the top after docstrings
-            lines = content.splitlines()
-            for i, line in enumerate(lines):
-                if line.startswith("import") or line.startswith("from"):
-                    lines.insert(i, patch)
-                    break
-            content = "\n".join(lines)
+            content = patch + content
             
         with open(target, 'w') as f:
             f.write(content)
             
-        log("\tSuccessfully applied Pyrogram Time Sync Monkey-Patch.")
+        log("\tSuccessfully applied Universal Time Sync Patch.")
     except Exception as e:
         log(f"\tFailed to apply time sync patch: {str(e)}")
 
