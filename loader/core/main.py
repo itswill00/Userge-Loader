@@ -354,22 +354,30 @@ def _apply_antiban_patches() -> None:
             elif "import random" not in content:
                 content = "import random\n" + content
                 
-            # Inject delay before send_message logic
+            # Inject delay after function definition and docstring
             # We look for the main method definition, usually 'async def send_message'
             pattern = "async def send_message"
             if pattern in content:
-                replacement = f"{pattern}(self, *args, **kwargs):\n    await asyncio.sleep(random.uniform(0.5, 2.0))"
-                # This is a bit tricky, we need to handle the arguments carefully
-                # Simplified approach: just inject after the docstring or first line of function
                 lines = content.splitlines()
                 new_lines = []
-                in_func = False
+                in_def = False
+                patched = False
+                
                 for line in lines:
                     new_lines.append(line)
-                    if pattern in line and not in_func:
-                        in_func = True
-                        indent = " " * (line.find("async") + 4)
+                    if pattern in line and not patched:
+                        in_def = True
+                    
+                    # Look for the end of definition (closing parenthesis and colon)
+                    if in_def and "):" in line and not patched:
+                        # Found end of definition, now find where the body starts
+                        # We skip docstrings if they exist
+                        in_def = False
+                        indent = " " * (line.find(")") + 4 if "(" in line else 8)
+                        # Actually, let's just wait for the next non-empty, non-comment line
+                        # But for simplicity, we'll append right after the definition's last line
                         new_lines.append(f"{indent}await asyncio.sleep(random.uniform(0.5, 2.0))")
+                        patched = True
                 
                 with open(target, 'w') as f:
                     f.write("\n".join(new_lines))
