@@ -60,6 +60,7 @@ def init_core() -> None:
 
     # apply anti-ban patches
     _apply_antiban_patches()
+    _apply_local_db_patches()
 
     core.checkout_branch()
 
@@ -384,6 +385,109 @@ def _apply_antiban_patches() -> None:
                 log(f"\tPatched: {target}")
         except Exception as e:
             log(f"\tFailed to patch {target}: {str(e)}")
+
+
+def _apply_local_db_patches() -> None:
+    log("Applying Local Database Patches ...")
+    
+    target = "userge/core/database.py"
+    if not os.path.exists(target):
+        return
+        
+    mock_db_code = """
+import json
+import asyncio
+import os
+
+class MockAsyncCollection:
+    def __init__(self, name):
+        self.name = name
+        self._file = "database.json"
+
+    def _get_data_sync(self):
+        if os.path.exists(self._file):
+            with open(self._file, 'r') as f:
+                try: return json.load(f)
+                except: return {}
+        return {}
+
+    def _save_data_sync(self, data):
+        with open(self._file, 'w') as f:
+            json.dump(data, f, indent=4)
+
+    async def find_one(self, query, *args, **kwargs):
+        db_data = self._get_data_sync()
+        data = db_data.get(self.name, [])
+        for item in data:
+            if all(item.get(k) == v for k, v in query.items()):
+                return item
+        return None
+
+    async def update_one(self, query, update, upsert=False, *args, **kwargs):
+        db_data = self._get_data_sync()
+        if self.name not in db_data: db_data[self.name] = []
+        data = db_data[self.name]
+        
+        item = None
+        for i in data:
+            if all(i.get(k) == v for k, v in query.items()):
+                item = i; break
+        
+        set_data = update.get('$set', {})
+        if item:
+            item.update(set_data)
+        elif upsert:
+            new_item = query.copy()
+            new_item.update(set_data)
+            data.append(new_item)
+        
+        self._save_data_sync(db_data)
+        return type('obj', (), {'acknowledged': True, 'matched_count': 1 if item else 0})()
+
+    async def insert_one(self, doc, *args, **kwargs):
+        db_data = self._get_data_sync()
+        if self.name not in db_data: db_data[self.name] = []
+        db_data[self.name].append(doc)
+        self._save_data_sync(db_data)
+        return type('obj', (), {'acknowledged': True, 'inserted_id': 1})()
+
+    def find(self, *args, **kwargs):
+        # returns an async iterator
+        class AsyncIter:
+            def __init__(self, data): self.data = data; self.idx = 0
+            def __aiter__(self): return self
+            async def __anext__(self):
+                if self.idx < len(self.data):
+                    res = self.data[self.idx]; self.idx += 1; return res
+                raise StopAsyncIteration
+            async def to_list(self, length=None): return self.data[:length] if length else self.data
+        
+        db_data = self._get_data_sync()
+        return AsyncIter(db_data.get(self.name, []))
+
+    async def delete_one(self, query, *args, **kwargs):
+        db_data = self._get_data_sync()
+        data = db_data.get(self.name, [])
+        for item in data:
+            if all(item.get(k) == v for k, v in query.items()):
+                data.remove(item)
+                self._save_data_sync(db_data)
+                break
+        return type('obj', (), {'acknowledged': True, 'deleted_count': 1})()
+
+    async def count_documents(self, query, *args, **kwargs):
+        db_data = self._get_data_sync()
+        return len(db_data.get(self.name, []))
+
+def get_collection(name: str):
+    return MockAsyncCollection(name)
+"""
+    try:
+        with open(target, 'w') as f:
+            f.write(mock_db_code)
+        log(f"\tSuccessfully patched: {target}")
+    except Exception as e:
+        log(f"\tFailed to patch database: {str(e)}")
 
 
 def load() -> None:
