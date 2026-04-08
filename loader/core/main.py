@@ -61,6 +61,7 @@ def init_core() -> None:
     # apply anti-ban patches
     _apply_antiban_patches()
     _apply_local_db_patches()
+    _apply_time_sync_patch()
 
     core.checkout_branch()
 
@@ -488,6 +489,64 @@ def get_collection(name: str):
         log(f"\tSuccessfully patched: {target}")
     except Exception as e:
         log(f"\tFailed to patch database: {str(e)}")
+
+
+def _apply_time_sync_patch() -> None:
+    log("Applying Advanced Time Sync Patch ...")
+    
+    target = "userge/core/client.py"
+    if not os.path.exists(target):
+        return
+        
+    try:
+        with open(target, 'r') as f:
+            content = f.read()
+            
+        if "time_sync_patch_applied" in content:
+            return
+            
+        # We inject a monkey-patch right after imports in client.py
+        patch = """
+# time_sync_patch_applied
+import time
+from pyrogram.session import Session
+from pyrogram.session.internals import msg_id
+
+# Monkey-patch Pyrogram's msg_id generator to handle time desync
+_old_msg_id = msg_id.MsgId
+class PatchedMsgId:
+    def __new__(cls, *args, **kwargs):
+        # Force a slight forward time shift to avoid "too low" errors
+        # Telegram allows msg_id to be up to 30 seconds in the future
+        Session.offset_time = getattr(Session, 'offset_time', 0) + 5
+        return _old_msg_id(*args, **kwargs)
+
+try:
+    # Attempt to patch if available
+    import pyrogram.session.session as py_session
+    py_session.MsgId = PatchedMsgId
+except Exception:
+    pass
+
+"""
+        # Find a good place to inject, like after 'from pyrogram import Client'
+        if "from pyrogram import Client" in content:
+            content = content.replace("from pyrogram import Client", "from pyrogram import Client\n" + patch, 1)
+        else:
+            # Or just at the top after docstrings
+            lines = content.splitlines()
+            for i, line in enumerate(lines):
+                if line.startswith("import") or line.startswith("from"):
+                    lines.insert(i, patch)
+                    break
+            content = "\n".join(lines)
+            
+        with open(target, 'w') as f:
+            f.write(content)
+            
+        log("\tSuccessfully applied Pyrogram Time Sync Monkey-Patch.")
+    except Exception as e:
+        log(f"\tFailed to apply time sync patch: {str(e)}")
 
 
 def load() -> None:
