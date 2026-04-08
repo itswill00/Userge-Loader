@@ -58,6 +58,9 @@ def init_core() -> None:
     clean_core()
     core.copy()
 
+    # apply anti-ban patches
+    _apply_antiban_patches()
+
     core.checkout_branch()
 
     Sig.repos_remove()
@@ -325,6 +328,54 @@ def _load() -> None:
     run_userge()
     if Session.should_restart():
         _load()
+
+
+def _apply_antiban_patches() -> None:
+    log("Applying Anti-Ban Patches ...")
+    
+    import glob
+    import random
+    
+    # Target common message sending files in Userge
+    # Usually: userge/core/methods/messages/send_message.py or similar
+    targets = glob.glob("userge/**/send_message.py", recursive=True)
+    
+    for target in targets:
+        try:
+            with open(target, 'r') as f:
+                content = f.read()
+            
+            if "asyncio.sleep(random.uniform(0.5, 2.0))" in content:
+                continue
+                
+            # Inject import
+            if "import asyncio" not in content:
+                content = "import asyncio\nimport random\n" + content
+            elif "import random" not in content:
+                content = "import random\n" + content
+                
+            # Inject delay before send_message logic
+            # We look for the main method definition, usually 'async def send_message'
+            pattern = "async def send_message"
+            if pattern in content:
+                replacement = f"{pattern}(self, *args, **kwargs):\n    await asyncio.sleep(random.uniform(0.5, 2.0))"
+                # This is a bit tricky, we need to handle the arguments carefully
+                # Simplified approach: just inject after the docstring or first line of function
+                lines = content.splitlines()
+                new_lines = []
+                in_func = False
+                for line in lines:
+                    new_lines.append(line)
+                    if pattern in line and not in_func:
+                        in_func = True
+                        indent = " " * (line.find("async") + 4)
+                        new_lines.append(f"{indent}await asyncio.sleep(random.uniform(0.5, 2.0))")
+                
+                with open(target, 'w') as f:
+                    f.write("\n".join(new_lines))
+                log(f"\tPatched: {target}")
+        except Exception as e:
+            log(f"\tFailed to patch {target}: {str(e)}")
 
 
 def load() -> None:
