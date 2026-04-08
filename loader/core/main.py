@@ -492,7 +492,7 @@ def get_collection(name: str):
 
 
 def _apply_time_sync_patch() -> None:
-    log("Applying Brutal Time Sync Patch ...")
+    log("Applying God-Mode Time Sync Patch ...")
     
     target = "userge/core/client.py"
     if not os.path.exists(target):
@@ -502,26 +502,37 @@ def _apply_time_sync_patch() -> None:
         with open(target, 'r') as f:
             content = f.read()
             
-        if "brutal_time_sync" in content:
+        if "god_mode_time_sync" in content:
             return
             
         patch = """
-# brutal_time_sync
+# god_mode_time_sync
 import time
+import urllib.request
+import email.utils
 from pyrogram.session import Session
 import pyrogram.session.internals.msg_id as py_msg_id
+
+def get_actual_server_time():
+    try:
+        # Get real UTC time from Telegram's own server headers
+        with urllib.request.urlopen("https://api.telegram.org", timeout=10) as r:
+            return email.utils.mktime_tz(email.utils.parsedate_tz(r.headers.get('Date')))
+    except Exception:
+        return time.time()
+
+# Calculate the massive gap between system and server
+_ACTUAL_OFFSET = int(get_actual_server_time() - time.time())
 
 class ForcedMsgId:
     _last_time = 0
     _inc = 0
 
     def __new__(cls, *args, **kwargs):
-        # We force the time to be at least 30 seconds ahead of system time
-        # This bypasses "msg_id too low" by making it "high enough"
-        Session.offset_time = 30
+        # Force Pyrogram to use the real world time, not the system time
+        # We add 2 seconds safety margin
+        now = int(time.time() + _ACTUAL_OFFSET + 2)
         
-        # Original logic to create msg_id from current (offset) time
-        now = int(time.time() + Session.offset_time)
         if cls._last_time == now:
             cls._inc += 4
         else:
@@ -529,9 +540,12 @@ class ForcedMsgId:
             cls._inc = 0
         return (now << 32) | cls._inc
 
+# Overwrite Pyrogram's internal generator
 py_msg_id.MsgId = ForcedMsgId
+# Set global offset for all sessions
+Session.offset_time = _ACTUAL_OFFSET + 2
 """
-        # Inject at the very top of client.py
+        # Inject at the top
         if "from pyrogram import Client" in content:
             content = content.replace("from pyrogram import Client", "from pyrogram import Client\n" + patch, 1)
         else:
@@ -540,7 +554,7 @@ py_msg_id.MsgId = ForcedMsgId
         with open(target, 'w') as f:
             f.write(content)
             
-        log("\tSuccessfully applied Brutal Time Sync Patch.")
+        log("\tGod-Mode Time Sync Applied (HTTP Server Time).")
     except Exception as e:
         log(f"\tFailed to apply time sync patch: {str(e)}")
 
