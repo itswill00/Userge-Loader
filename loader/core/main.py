@@ -514,12 +514,20 @@ from pyrogram.session.internals import msg_id
 
 # Monkey-patch Pyrogram's msg_id generator to handle time desync
 _old_msg_id = msg_id.MsgId
+
 class PatchedMsgId:
     def __new__(cls, *args, **kwargs):
         # Force a slight forward time shift to avoid "too low" errors
         # Telegram allows msg_id to be up to 30 seconds in the future
         Session.offset_time = getattr(Session, 'offset_time', 0) + 5
         return _old_msg_id(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(_old_msg_id, name)
+
+    @staticmethod
+    def set_server_time(server_time):
+        return _old_msg_id.set_server_time(server_time)
 
 try:
     # Attempt to patch if available
